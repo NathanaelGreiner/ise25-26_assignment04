@@ -81,23 +81,131 @@ public class PosServiceImpl implements PosService {
 
     /**
      * Converts an OSM node to a POS domain object.
-     * Note: This is a stub implementation and should be replaced with real mapping logic.
+     * Extracts relevant fields from OSM tags and maps them to POS attributes.
+     * Uses intelligent defaults for missing fields.
+     *
+     * @param osmNode the OSM node with tags
+     * @return a new POS object with data extracted from OSM tags
+     * @throws OsmNodeMissingFieldsException if required fields are missing
      */
-    private @NonNull Pos convertOsmNodeToPos(@NonNull OsmNode osmNode) {
-        if (osmNode.nodeId().equals(5589879349L)) {
-            return Pos.builder()
-                    .name("Rada Coffee & Rösterei")
-                    .description("Caffé und Rösterei")
-                    .type(PosType.CAFE)
-                    .campus(CampusType.ALTSTADT)
-                    .street("Untere Straße")
-                    .houseNumber("21")
-                    .postalCode(69117)
-                    .city("Heidelberg")
-                    .build();
-        } else {
+    private @NonNull Pos convertOsmNodeToPos(@NonNull OsmNode osmNode) throws OsmNodeMissingFieldsException {
+        // Extract required fields
+        String name = osmNode.getTag("name");
+        if (name == null || name.isBlank()) {
+            log.warn("OSM node {} missing required 'name' tag", osmNode.nodeId());
             throw new OsmNodeMissingFieldsException(osmNode.nodeId());
         }
+
+        // Extract address components
+        String street = osmNode.getTag("addr:street");
+        String houseNumber = osmNode.getTag("addr:housenumber");
+        String postalCode = osmNode.getTag("addr:postcode");
+        String city = osmNode.getTag("addr:city");
+
+        // Validate critical address fields
+        if (street == null || street.isBlank() ||
+            houseNumber == null || houseNumber.isBlank() ||
+            postalCode == null || postalCode.isBlank() ||
+            city == null || city.isBlank()) {
+            log.warn("OSM node {} missing required address fields", osmNode.nodeId());
+            throw new OsmNodeMissingFieldsException(osmNode.nodeId());
+        }
+
+        // Extract optional fields with defaults
+        String description = osmNode.getTag("description");
+        if (description == null || description.isBlank()) {
+            description = osmNode.getTag("amenity");
+            if (description == null || description.isBlank()) {
+                description = name; // Use name as fallback
+            }
+        }
+
+        // Determine POS type from OSM tags
+        PosType posType = determinePosType(osmNode);
+
+        // Determine campus type from address or default to ALTSTADT
+        CampusType campusType = determineCampusType(city, osmNode);
+
+        // Parse postal code
+        Integer postalCodeInt;
+        try {
+            postalCodeInt = Integer.parseInt(postalCode);
+        } catch (NumberFormatException e) {
+            log.warn("OSM node {} has invalid postal code: {}", osmNode.nodeId(), postalCode);
+            throw new OsmNodeMissingFieldsException(osmNode.nodeId());
+        }
+
+        log.debug("Successfully converted OSM node {} to POS: name='{}', street='{}', city='{}'",
+                osmNode.nodeId(), name, street, city);
+
+        return Pos.builder()
+                .name(name)
+                .description(description)
+                .type(posType)
+                .campus(campusType)
+                .street(street)
+                .houseNumber(houseNumber)
+                .postalCode(postalCodeInt)
+                .city(city)
+                .build();
+    }
+
+    /**
+     * Determines the POS type from OSM tags.
+     * Maps OSM amenity values to POS types.
+     *
+     * @param osmNode the OSM node
+     * @return the determined POS type, or CAFE as default
+     */
+    private PosType determinePosType(@NonNull OsmNode osmNode) {
+        String amenity = osmNode.getTag("amenity");
+        String shop = osmNode.getTag("shop");
+
+        if (amenity != null) {
+            return switch (amenity.toLowerCase()) {
+                case "cafe" -> PosType.CAFE;
+                case "coffee" -> PosType.CAFE;
+                case "bakery" -> PosType.BAKERY;
+                case "vending_machine" -> PosType.VENDING_MACHINE;
+                case "fast_food" -> PosType.CAFETERIA;
+                case "restaurant" -> PosType.CAFETERIA;
+                default -> PosType.CAFE;
+            };
+        }
+
+        if (shop != null && shop.toLowerCase().contains("bakery")) {
+            return PosType.BAKERY;
+        }
+
+        // Default to CAFE for any coffee-related OSM entry
+        return PosType.CAFE;
+    }
+
+    /**
+     * Determines the campus type from city information and OSM tags.
+     * Currently defaults to ALTSTADT for Heidelberg and uses other campus types for known regions.
+     *
+     * @param city the city name from OSM
+     * @param osmNode the OSM node
+     * @return the determined campus type
+     */
+    private CampusType determineCampusType(@NonNull String city, @NonNull OsmNode osmNode) {
+        if (!city.equalsIgnoreCase("Heidelberg")) {
+            return CampusType.ALTSTADT; // Default for non-Heidelberg cities
+        }
+
+        // For Heidelberg, check district or default to ALTSTADT
+        String district = osmNode.getTag("addr:district");
+        if (district != null) {
+            return switch (district.toLowerCase()) {
+                case "bergheim" -> CampusType.BERGHEIM;
+                case "inf" -> CampusType.INF;
+                case "neuenheim" -> CampusType.INF;
+                default -> CampusType.ALTSTADT;
+            };
+        }
+
+        return CampusType.ALTSTADT; // Default campus
     }
 
     /**

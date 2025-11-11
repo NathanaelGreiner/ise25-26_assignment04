@@ -1,6 +1,8 @@
 package de.seuhd.campuscoffee.systest;
 
 import de.seuhd.campuscoffee.domain.model.Pos;
+import de.seuhd.campuscoffee.domain.model.PosType;
+import de.seuhd.campuscoffee.domain.model.CampusType;
 import de.seuhd.campuscoffee.domain.tests.TestFixtures;
 import org.junit.jupiter.api.Test;
 import java.util.List;
@@ -78,5 +80,33 @@ public class PosSystemTests extends AbstractSysTest {
                 .usingRecursiveComparison()
                 .ignoringFields("createdAt", "updatedAt")
                 .isEqualTo(posToUpdate);
+    }
+
+    @Test
+    void importPosFromOsmNode() {
+        // Test the success definition: OSM Node 5589879349 should import as "Rada Coffee & Rösterei"
+        Pos importedPos = posService.importFromOsmNode(5589879349L);
+
+        assertThat(importedPos)
+                .isNotNull()
+                .satisfies(pos -> {
+                    assertThat(pos.name()).isEqualTo("Rada Coffee & Rösterei");
+                    assertThat(pos.description()).isNotBlank();
+                    assertThat(pos.type()).isEqualTo(PosType.CAFE);
+                    assertThat(pos.street()).isEqualTo("Untere Straße");
+                    assertThat(pos.houseNumber()).isEqualTo("21");
+                    assertThat(pos.postalCode()).isEqualTo(69117);
+                    assertThat(pos.city()).isEqualTo("Heidelberg");
+                    assertThat(pos.campus()).isEqualTo(CampusType.ALTSTADT);
+                    assertThat(pos.id()).isNotNull(); // Should have been persisted with an ID
+                    assertThat(pos.createdAt()).isNotNull();
+                    assertThat(pos.updatedAt()).isNotNull();
+                });
+
+        // Verify that the POS can be retrieved after import
+        Pos retrievedPos = posService.getById(importedPos.id());
+        assertThat(retrievedPos)
+                .usingRecursiveComparison()
+                .isEqualTo(importedPos);
     }
 }
